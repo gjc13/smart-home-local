@@ -52,6 +52,7 @@ app.onSync((body, headers) => {
                              type: 'action.devices.types.LIGHT',
                              traits: [
                                'action.devices.traits.ColorSetting',
+                               'action.devices.traits.OnOff',
                              ],
                              id: device.id,
                              otherDeviceIds: [{

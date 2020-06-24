@@ -17,6 +17,10 @@ export interface IColorAbsolute {
   color: {name: string; spectrumRGB: number;};
 }
 
+export interface IOnOff {
+  on: boolean;
+}
+
 export interface IDiscoveryData {
   id: string;
   model: string;

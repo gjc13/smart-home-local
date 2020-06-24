@@ -14,7 +14,7 @@
 /// <reference types="@google/local-home-sdk" />
 
 import {ControlKind} from '../common/discovery';
-import {IColorAbsolute, ICustomData, IDiscoveryData} from './types';
+import {IColorAbsolute, ICustomData, IDiscoveryData, IOnOff} from './types';
 
 import {DOMParser} from 'xmldom';
 import cbor from 'cbor';
@@ -172,55 +172,96 @@ export class HomeApp {
         const command = executeRequest.inputs[0].payload.commands[0];
         // TODO(proppy): handle multiple executions.
         const execution = command.execution[0];
-        if (execution.command !== 'action.devices.commands.ColorAbsolute') {
+        if (execution.command == 'action.devices.commands.OnOff') {
+          const executeResponse =
+              new smarthome.Execute.Response.Builder().setRequestId(
+                  executeRequest.requestId);
+          await Promise.all(command.devices.map(async (device) => {
+            const commandBuf = Buffer.alloc(1);
+            const customData = device.customData as ICustomData;
+            const cmd = new smarthome.DataFlow.UdpRequestData();
+            const params = execution.params as IOnOff;
+            const traitString = `\{${execution.command }: ${params.on}\}`
+            const buf = Buffer.alloc(traitString.length)
+
+            for (let i = 0; i < traitString.length; i++) {
+              buf.writeUInt8(traitString.charCodeAt(i) & 0xff, i);
+            }
+
+            cmd.data = buf.toString('hex');
+            cmd.requestId = executeRequest.requestId;
+            cmd.deviceId = device.id;
+            cmd.port = customData.port;
+
+            console.log(
+                `${customData.control_protocol} RequestData: `, cmd);
+
+            try {
+              const result =
+                  await this.app.getDeviceManager().send(cmd);
+              const state = {
+                ...params,
+                online: true,
+              };
+              executeResponse.setSuccessState(result.deviceId, state);
+            } catch (e) {
+              console.log(e)
+              executeResponse.setErrorState(device.id, e.errorCode);
+            }
+          }));
+          console.log(
+              `EXECUTE response: ${JSON.stringify(executeResponse, null, 2)}`);
+          return executeResponse.build();
+        } else if (execution.command !== 'action.devices.commands.ColorAbsolute') {
           throw Error(`Unsupported command: ${execution.command}`);
+        } else {
+          // Create execution response to capture individual command
+          // success/failure for each devices.
+          const executeResponse =
+              new smarthome.Execute.Response.Builder().setRequestId(
+                  executeRequest.requestId);
+          // Handle light device commands for all devices.
+          await Promise.all(command.devices.map(async (device) => {
+            const stream = opcStream();
+            const params = execution.params as IColorAbsolute;
+            const customData = device.customData as ICustomData;
+            // Create OPC set-pixel 8-bit message from ColorAbsolute command
+            const rgb = params.color.spectrumRGB;
+            const colorBuf = Buffer.alloc(customData.leds * 3);
+            for (let i = 0; i < colorBuf.length; i += 3) {
+              colorBuf.writeUInt8(rgb >> 16 & 0xff, i + 0);  // R
+              colorBuf.writeUInt8(rgb >> 8 & 0xff, i + 1);   // G
+              colorBuf.writeUInt8(rgb >> 0 & 0xff, i + 2);   // B
+            }
+            stream.writePixels(customData.channel, colorBuf);
+            const opcMessage = stream.read();
+            console.debug('opcMessage:', opcMessage);
+
+            const deviceCommand =
+                makeSendCommand(customData.control_protocol, opcMessage);
+            deviceCommand.requestId = executeRequest.requestId;
+            deviceCommand.deviceId = device.id;
+            deviceCommand.port = customData.port;
+
+            console.debug(
+                `${customData.control_protocol} RequestData: `, deviceCommand);
+            try {
+              const result =
+                  await this.app.getDeviceManager().send(deviceCommand);
+              const state = {
+                ...params,
+                online: true,
+              };
+              executeResponse.setSuccessState(result.deviceId, state);
+            } catch (e) {
+              executeResponse.setErrorState(device.id, e.errorCode);
+            }
+          }));
+          console.log(
+              `EXECUTE response: ${JSON.stringify(executeResponse, null, 2)}`);
+          // Return execution response to smarthome infrastructure.
+          return executeResponse.build();
         }
-        // Create execution response to capture individual command
-        // success/failure for each devices.
-        const executeResponse =
-            new smarthome.Execute.Response.Builder().setRequestId(
-                executeRequest.requestId);
-        // Handle light device commands for all devices.
-        await Promise.all(command.devices.map(async (device) => {
-          const stream = opcStream();
-          const params = execution.params as IColorAbsolute;
-          const customData = device.customData as ICustomData;
-          // Create OPC set-pixel 8-bit message from ColorAbsolute command
-          const rgb = params.color.spectrumRGB;
-          const colorBuf = Buffer.alloc(customData.leds * 3);
-          for (let i = 0; i < colorBuf.length; i += 3) {
-            colorBuf.writeUInt8(rgb >> 16 & 0xff, i + 0);  // R
-            colorBuf.writeUInt8(rgb >> 8 & 0xff, i + 1);   // G
-            colorBuf.writeUInt8(rgb >> 0 & 0xff, i + 2);   // B
-          }
-          stream.writePixels(customData.channel, colorBuf);
-          const opcMessage = stream.read();
-          console.debug('opcMessage:', opcMessage);
-
-          const deviceCommand =
-              makeSendCommand(customData.control_protocol, opcMessage);
-          deviceCommand.requestId = executeRequest.requestId;
-          deviceCommand.deviceId = device.id;
-          deviceCommand.port = customData.port;
-
-          console.debug(
-              `${customData.control_protocol} RequestData: `, deviceCommand);
-          try {
-            const result =
-                await this.app.getDeviceManager().send(deviceCommand);
-            const state = {
-              ...params,
-              online: true,
-            };
-            executeResponse.setSuccessState(result.deviceId, state);
-          } catch (e) {
-            executeResponse.setErrorState(device.id, e.errorCode);
-          }
-        }));
-        console.log(
-            `EXECUTE response: ${JSON.stringify(executeResponse, null, 2)}`);
-        // Return execution response to smarthome infrastructure.
-        return executeResponse.build();
       }
 
   private getDiscoveryData = async(

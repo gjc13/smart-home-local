@@ -46,7 +46,7 @@ _Develop > Actions > Configure local home SDK_ under **Device Scan Configuration
 > those parameters when you [set up the virtual device](#set-up-the-virtual-device).
 
 #### UDP
-- **Broadcast address**: `255.255.255.255`
+- **Broadcast address**: `127.0.0.1`
 - **Broadcast port**: `3312`
 - **Listen port**: `3311`
 - **Discovery packet**: `A5A5A5A5`
